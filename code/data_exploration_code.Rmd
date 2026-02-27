@@ -1,0 +1,719 @@
+---
+title: "Data Exploration"
+author: "Myla Simmons"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load libraries
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(stringr)
+library(tidytext)
+library(ggplot2)
+library(forcats)
+library(tibble)
+library(scales)
+library(quanteda)
+library(quanteda.textstats)
+library(udpipe)
+```
+
+# Load and Store Data
+
+```{r}
+# Load texts
+Text_A <- read_file("../texts/A06785.txt")
+Text_B <- read_file("../texts/A06786.txt")
+Text_C <- read_file("../texts/A06788.txt")
+Text_D <- read_file("../texts/A06789.txt")
+Text_E <- read_file("../texts/A06790.txt")
+Text_F <- read_file("../texts/A06791.txt")
+Text_G <- read_file("../texts/A07594__Circle_of_Commerce.txt")
+Text_H <- read_file("../texts/A07886.txt")
+Text_I <- read_file("../texts/A32827.txt")
+Text_J <- read_file("../texts/A32828.txt")
+Text_K <- read_file("../texts/A32829.txt")
+Text_L <- read_file("../texts/A32830.txt")
+Text_M <- read_file("../texts/A32833.txt")
+Text_N <- read_file("../texts/A32836.txt")
+Text_O <- read_file("../texts/A32837.txt")
+Text_P <- read_file("../texts/A32838.txt")
+Text_Q <- read_file("../texts/A32839.txt")
+Text_R <- read_file("../texts/A50763.txt")
+Text_S <- read_file("../texts/A51598.txt")
+Text_T <- read_file("../texts/A69858.txt")
+Text_U <- read_file("../texts/A93819.txt")
+Text_V <- read_file("../texts/B14801__Free_Trade.txt")
+Text_W <- read_file("../texts/wealth.txt")
+```
+
+```{r}
+texts <- c("Text A" = Text_A,
+           "Text B" = Text_B,
+           "Text C" = Text_C,
+           "Text D" = Text_D,
+           "Text E" = Text_E,
+           "Text F" = Text_F,
+           "Text G" = Text_G,
+           "Text H" = Text_H,
+           "Text I" = Text_I,
+           "Text J" = Text_J,
+           "Text K" = Text_K,
+           "Text L" = Text_L,
+           "Text M" = Text_M,
+           "Text N" = Text_N,
+           "Text O" = Text_O,
+           "Text P" = Text_P,
+           "Text Q" = Text_Q,
+           "Text R" = Text_R,
+           "Text S" = Text_S,
+           "Text T" = Text_T,
+           "Text U" = Text_U,
+           "Text V" = Text_V,
+           "Text W" = Text_W)
+
+```
+
+# Preprocessing
+
+```{r}
+# Normalize long s
+texts_adj_s <- str_replace_all(texts, "ſ", "s")
+names(texts_adj_s) <- names(texts)
+
+# Remove uncommon symbols
+texts_adj_s <- str_replace_all(texts_adj_s, "[●▪◊]", "")
+names(texts_adj_s) <- names(texts)
+
+# Build corpus
+corp <- corpus(texts_adj_s)
+
+# Create a vector of custom stopwords for removal
+custom_stop <- c(
+  "vnto","haue","doo","hath","bee","ye","thee","hee","shall","hast","doe",
+  "beene","thereof","thus" 
+)
+
+
+# Create a vector single letters for removal
+single_letters <- c(letters)
+
+# Tokenize + Clean
+toks <- tokens(
+  corp,
+  remove_punct   = TRUE,
+  remove_numbers = TRUE,
+  remove_symbols = TRUE
+) |>
+  tokens_tolower() |>
+  tokens_remove(c(stopwords("en"), custom_stop, single_letters)) |>
+  tokens_remove(pattern = "^[0-9]", valuetype = "regex")
+```
+
+
+# TF-IDF
+
+```{r}
+dfm_mat <- dfm(toks)
+dfm_mat
+```
+
+```{r}
+dfm_tfidf <- dfm_tfidf(dfm_mat)
+dfm_tfidf
+```
+
+```{r}
+tfidf_mat <- as.matrix(dfm_tfidf)
+```
+
+```{r}
+top_terms_table <- dfm_tfidf |>
+  convert(to = "data.frame") |>
+  rename(document = doc_id) |>
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "term",
+    values_to = "tfidf"
+  ) |>
+  group_by(document) |>
+  slice_max(tfidf, n = 15) |>
+  arrange(document, desc(tfidf)) |>
+  ungroup()
+
+top_terms_table
+
+write.csv(top_terms_table, "../results/Tables/top_terms_table.csv", row.names = FALSE)
+```
+
+
+
+```{r}
+shared_terms_with_texts <- top_terms_table |>
+  group_by(term) |>
+  filter(n_distinct(document) > 1) |>
+  summarise(
+    n_documents = n_distinct(document),
+    texts = paste(unique(document), collapse = ", "),
+    .groups = "drop"
+  ) |>
+  arrange(desc(n_documents))
+
+shared_terms_with_texts[1:5,]
+paste(
+  "Number of terms with a top 15 TF-IDF score in at least 2 documents: ",
+  nrow(shared_terms_with_texts)
+)
+
+write.csv(shared_terms_with_texts, "../results/Tables/shared_terms_with_texts.csv", row.names = FALSE)
+
+
+```
+
+# Pearson Correlation
+```{r}
+dfm_mat_trimmed <- dfm_trim(dfm_mat, min_termfreq = 5)
+
+# correlation similarity
+sim_cor <- textstat_simil(
+  dfm_mat_trimmed,
+  method = "correlation",
+  margin = "documents"
+)
+```
+
+```{r}
+# Convert similarity object to a matrix 
+r_mat <- as.matrix(sim_cor) 
+# Take a quick look 
+dim(r_mat) 
+r_mat[1:5, 1:5] 
+# rounding correlation for readability (see explanation below)
+r_mat <- round(r_mat, 3) 
+# Long format for ggplot  
+heat_df <- as.data.frame(r_mat) %>%  
+rownames_to_column("doc_i") %>% # First document in pair  
+pivot_longer(-doc_i, names_to = "doc_j", values_to = "r") # Second document + correlation  
+# create the heatmap  
+heatmap_plot <- ggplot(heat_df, aes(x = doc_j, y = doc_i, fill = r)) +  
+geom_tile(color = "grey80") + # Create colored tiles
+geom_text(aes(label = sprintf("%.2f", r)), size = 1.5) +
+coord_fixed() + # Keep tiles square  
+scale_fill_gradient2(  
+                       low = "blue",   
+                        mid = "white",  
+                         high = "red",  
+                         midpoint = 0  # Center color scale at 0  
+) +  
+labs( title = "Pearson Correlation Between Documents",  
+x = NULL,  
+y = NULL,  
+fill = "Correlation" 
+) + theme_minimal() +  
+theme(  
+    axis.text.x = element_text(angle = 45, hjust = 1),  
+panel.grid = element_blank() 
+)
+
+ggsave("../results/Figures/heatmap.png", plot = heatmap_plot, width = 8, height = 6, dpi = 300)
+```
+
+```{r}
+# Remove self-correlations (diagonal)
+heat_df_unique <- heat_df %>%
+  filter(doc_i != doc_j) %>%  # remove diagonal
+  rowwise() %>%
+  mutate(pair = paste(sort(c(doc_i, doc_j)), collapse = "_")) %>%  # make unique pairs
+  distinct(pair, .keep_all = TRUE) %>%
+  ungroup() %>%
+  select(-pair)  # drop the helper column
+
+# Top 2 correlations
+top_5 <- heat_df_unique %>%
+  arrange(desc(r)) %>%
+  slice(1:5)
+
+# Bottom 2 correlations
+bottom_5 <- heat_df_unique %>%
+  arrange(r) %>%
+  slice(1:5)
+
+top_5
+bottom_5
+
+write.csv(top_5, "../results/Tables/top_5.csv", row.names = FALSE)
+write.csv(bottom_5, "../results/Tables/bottom_5.csv", row.names = FALSE)
+```
+
+
+# Syntactic Complexity Profile
+```{r}
+texts_df <- tibble(
+  document = names(texts_adj_s),
+  text = as.character(texts_adj_s)
+) %>%
+  filter(document %in% c("Text U", "Text V"))
+```
+
+```{r}
+#Load an English UD (= Univesal Dependencies) model ONCE
+
+model_info <- udpipe_download_model(language = "english-ewt")
+ud_model <- udpipe_load_model(model_info$file_model)
+```
+
+```{r}
+anno_df <- texts_df %>%
+  mutate(
+    # Parse each text with the UD parser; set doc_id to our document name
+    anno = map2(text, document, ~ udpipe_annotate(ud_model, x = .x, doc_id = .y) %>%
+      as.data.frame())
+  ) %>%
+  # Keep only parsed annotations, then unnest into rows
+  select(anno) %>%
+  unnest(anno) %>%
+  # Use the UD doc_id as our document label (and drop any duplicates cleanly)
+  rename(document = doc_id) %>%
+  # Select columns for syntactic analysis
+  select(
+    document,
+    paragraph_id,
+    sentence_id,
+    token_id,
+    token,
+    lemma,
+    upos,          # part of speech
+    feats,         # grammatical features (e.g., verb form)
+    head_token_id, # head of dependency relation
+    dep_rel        # dependency relation type
+  )
+
+anno_df %>% glimpse()
+```
+
+
+```{r}
+syntax_df <- anno_df %>%
+mutate(
+is_word = upos != "PUNCT", #<--is it a word (and not punctuation?)
+
+
+# Is this an independent clause? finite verbs are proxy for independent clauses
+is_clause = (upos %in% c("VERB", "AUX")) &
+            str_detect(coalesce(feats, ""), "VerbForm=Fin"),
+
+# Dependent clause? 
+is_dep_clause = dep_rel %in% c(
+  "advcl", #adverbial clause 
+  "ccomp", # clausal complement
+  "xcomp", #open clausal complement
+  "acl", #adnomial clause
+  "acl:relcl" #relative clause
+),
+
+# Is this coordination? That is, does it use "and" "or" etc.?
+is_coord = dep_rel %in% c("conj", "cc"),
+
+# Nominal complexity: these relations make noun phrases more complex
+is_complex_nominal = dep_rel %in% c(
+  "amod", # adjective modifier ("big cup")
+  "nmod", #nominal modifier ("cup of tea")
+  "compound", # compound ("lemon tea")
+  "appos" #apposition ("tea, my favorite!")
+)
+
+)
+```
+
+
+```{r}
+sentence_df <- syntax_df %>%
+  filter(is_word) %>%           #count words (not punctuation)
+  group_by(document, sentence_id) %>%   #group by document and sentence
+  summarise(
+    words          = n(),   #number of words per sentence
+    clauses        = sum(is_clause), # number of clauses per sentence
+    dep_clauses    = sum(is_dep_clause), #number of dependent clauses per sentence
+    .groups = "drop"
+  )
+
+sentence_df
+```
+
+
+```{r}
+mls_df <- sentence_df %>%
+group_by(document) %>%
+summarise(
+MLS = mean(words), # Average words per sentence
+.groups = "drop"
+)
+
+# Let's take a look
+mls_df 
+```
+
+```{r}
+#Calculate clauses per sentence
+clausal_density_df <- sentence_df %>%
+group_by(document) %>%
+summarise(
+sentences = n(),
+clauses   = sum(clauses),
+C_per_S   = clauses / sentences,
+.groups = "drop"
+)
+
+# Let's check and how do they compare?
+clausal_density_df
+```
+
+```{r}
+subordination_df <- sentence_df %>%
+group_by(document) %>%
+summarise(
+clauses = sum(clauses),
+dep_clauses = sum(dep_clauses),
+sentences = n(),
+DC_per_C = dep_clauses / pmax(clauses, 1), #avoid division by 0 (shouldn't happen, but if no clauses were detected in the sentence, we still want it to run)
+DC_per_S = dep_clauses / sentences,
+.groups = "drop"
+)
+
+subordination_df
+```
+
+```{r}
+coordination_df <- syntax_df %>%
+group_by(document) %>%
+summarise(
+coord_relations = sum(is_coord),
+clauses         = sum(is_clause),
+sentences       = n_distinct(sentence_id),
+Coord_per_C     = coord_relations / pmax(clauses, 1),
+Coord_per_S     = coord_relations / sentences,
+.groups = "drop"
+)
+
+coordination_df
+```
+
+```{r}
+nominal_df <- syntax_df %>%
+group_by(document) %>%
+summarise(
+complex_nominals = sum(is_complex_nominal),
+clauses          = sum(is_clause),
+sentences        = n_distinct(sentence_id),
+CN_per_C         = complex_nominals / pmax(clauses, 1),
+CN_per_S         = complex_nominals / sentences,
+.groups = "drop"
+)
+
+nominal_df
+```
+
+```{r}
+# Combine all measures
+all_measures <- mls_df %>%  # ← Added mls_df %>%
+  left_join(clausal_density_df %>% select(document, C_per_S), by = "document") %>%
+  left_join(subordination_df %>% select(document, DC_per_C, DC_per_S), by = "document") %>%
+  left_join(coordination_df %>% select(document, Coord_per_C, Coord_per_S), by = "document") %>%
+  left_join(nominal_df %>% select(document, CN_per_C, CN_per_S), by = "document")
+all_measures
+
+write.csv(all_measures, "../results/Tables/all_measures.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Reshape for plotting
+syntax_long <- all_measures %>%  # ← Added %>%
+  pivot_longer(
+    cols = -document,
+    names_to = "Measure",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Category = case_when(
+      Measure == "MLS" ~ "Sentence Length",
+      Measure == "C_per_S" ~ "Clausal Density",
+      Measure %in% c("DC_per_C", "DC_per_S") ~ "Subordination",
+      Measure %in% c("Coord_per_C", "Coord_per_S") ~ "Coordination",
+      Measure %in% c("CN_per_C", "CN_per_S") ~ "Phrasal Complexity"
+    )
+  )
+
+# Plot
+syntax_plot <- ggplot(syntax_long, aes(x = Measure, y = Value, fill = document)) +
+  geom_col(position = "dodge", width = 0.7) +
+  facet_wrap(~Category, scales = "free", ncol = 2) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Syntactic Complexity: Complete Profile",
+    subtitle = "Comparing multiple dimensions of syntactic complexity",
+    x = NULL,
+    y = "Value",
+    fill = "Document"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+ggsave("../results/Figures/syntactic_complexity_profile.png", plot = syntax_plot, width = 10, height = 8, dpi = 300)
+```
+```{r}
+# --- Extract complete sentences near MLS targets for Text U (~43 words) and Text V (~23 words) ---
+
+# 1. Reconstruct full sentences from UD tokens
+sentences_full <- anno_df %>%
+  group_by(document, sentence_id) %>%
+  summarise(sentence_text = paste(token, collapse = " "),
+            .groups = "drop")
+
+# 2. Attach sentence text to sentence-level metrics
+sentence_df2 <- sentence_df %>%
+  left_join(sentences_full, by = c("document", "sentence_id"))
+
+# 3. Target MLS values
+target_U <- 43
+target_V <- 23
+
+# 4. Keep only complete sentences that end with a period
+sentence_df_clean <- sentence_df2 %>%
+  filter(str_detect(sentence_text, "\\.$"))
+
+# 5. Select the sentence closest to the target for each text
+mls_examples <- sentence_df_clean %>%
+  mutate(
+    target = if_else(document == "Text U", target_U, target_V),
+    distance = abs(words - target)
+  ) %>%
+  group_by(document) %>%
+  slice_min(distance, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(document, words, sentence_text)
+
+mls_examples
+
+```
+
+
+# Synthesis
+
+
+
+```{r}
+top_terms_table_filtered <- top_terms_table |>
+  filter(document %in% c("Text U", "Text V", "Text F", "text G", "Text J", "Text K"))
+
+top_terms_table_filtered
+write.csv(top_terms_table_filtered, "../results/Tables/top_terms_table_filtered.csv", row.names = FALSE)
+```
+
+```{r}
+sim_matrix <- as.matrix(sim_cor)
+
+target_docs <- intersect(
+  c("Text V","Text F", "Text G","Text J", "Text K"),
+  colnames(sim_matrix)
+)
+
+sim_matrix_filtered <- sim_matrix["Text U", target_docs]
+sim_matrix_filtered
+
+write.csv(sim_matrix_filtered, "../results/Tables/sim_matrix_filtered.csv", row.names = FALSE)
+```
+
+```{r}
+texts_df_synth <- tibble(
+  document = names(texts_adj_s),
+  text = as.character(texts_adj_s)
+) %>%
+  filter(document %in% c("Text U", "Text V","Text F","Text G","Text J","Text K"))
+```
+
+```{r}
+#Load an English UD (= Univesal Dependencies) model ONCE
+
+model_info_synth <- udpipe_download_model(language = "english-ewt")
+ud_model_synth <- udpipe_load_model(model_info$file_model)
+```
+
+```{r}
+anno_df_synth <- texts_df_synth %>%
+  mutate(
+    # Parse each text with the UD parser; set doc_id to our document name
+    anno = map2(text, document, ~ udpipe_annotate(ud_model, x = .x, doc_id = .y) %>%
+      as.data.frame())
+  ) %>%
+  # Keep only parsed annotations, then unnest into rows
+  select(anno) %>%
+  unnest(anno) %>%
+  # Use the UD doc_id as our document label (and drop any duplicates cleanly)
+  rename(document = doc_id) %>%
+  # Select columns for syntactic analysis
+  select(
+    document,
+    paragraph_id,
+    sentence_id,
+    token_id,
+    token,
+    lemma,
+    upos,          # part of speech
+    feats,         # grammatical features (e.g., verb form)
+    head_token_id, # head of dependency relation
+    dep_rel        # dependency relation type
+  )
+
+anno_df_synth %>% glimpse()
+```
+
+
+```{r}
+syntax_df_synth <- anno_df_synth %>%
+mutate(
+is_word = upos != "PUNCT", #<--is it a word (and not punctuation?)
+
+
+# Is this an independent clause? finite verbs are proxy for independent clauses
+is_clause_synth = (upos %in% c("VERB", "AUX")) &
+            str_detect(coalesce(feats, ""), "VerbForm=Fin"),
+
+# Dependent clause? 
+is_dep_clause_synth = dep_rel %in% c(
+  "advcl", #adverbial clause 
+  "ccomp", # clausal complement
+  "xcomp", #open clausal complement
+  "acl", #adnomial clause
+  "acl:relcl" #relative clause
+),
+
+# Is this coordination? That is, does it use "and" "or" etc.?
+is_coord_synth = dep_rel %in% c("conj", "cc"),
+
+# Nominal complexity: these relations make noun phrases more complex
+is_complex_nominal_synth = dep_rel %in% c(
+  "amod", # adjective modifier ("big cup")
+  "nmod", #nominal modifier ("cup of tea")
+  "compound", # compound ("lemon tea")
+  "appos" #apposition ("tea, my favorite!")
+)
+
+)
+```
+
+
+```{r}
+sentence_df_synth <- syntax_df_synth %>%
+  filter(is_word) %>%           #count words (not punctuation)
+  group_by(document, sentence_id) %>%   #group by document and sentence
+  summarise(
+    words          = n(),   #number of words per sentence
+    clauses        = sum(is_clause_synth), # number of clauses per sentence
+    dep_clauses    = sum(is_dep_clause_synth), #number of dependent clauses per sentence
+    .groups = "drop"
+  )
+
+sentence_df
+```
+
+
+```{r}
+mls_df_synth <- sentence_df_synth %>%
+group_by(document) %>%
+summarise(
+MLS = mean(words), # Average words per sentence
+.groups = "drop"
+)
+
+# Let's take a look
+mls_df_synth 
+```
+
+```{r}
+#Calculate clauses per sentence
+clausal_density_df_synth <- sentence_df_synth %>%
+group_by(document) %>%
+summarise(
+sentences = n(),
+clauses   = sum(clauses),
+C_per_S   = clauses / sentences,
+.groups = "drop"
+)
+
+# Let's check and how do they compare?
+clausal_density_df_synth
+```
+
+```{r}
+subordination_df_synth <- sentence_df_synth %>%
+group_by(document) %>%
+summarise(
+clauses = sum(clauses),
+dep_clauses = sum(dep_clauses),
+sentences = n(),
+DC_per_C = dep_clauses / pmax(clauses, 1), #avoid division by 0 (shouldn't happen, but if no clauses were detected in the sentence, we still want it to run)
+DC_per_S = dep_clauses / sentences,
+.groups = "drop"
+)
+
+subordination_df_synth
+```
+
+```{r}
+coordination_df_synth <- syntax_df_synth %>%
+group_by(document) %>%
+summarise(
+coord_relations = sum(is_coord_synth),
+clauses         = sum(is_clause_synth),
+sentences       = n_distinct(sentence_id),
+Coord_per_C     = coord_relations / pmax(clauses, 1),
+Coord_per_S     = coord_relations / sentences,
+.groups = "drop"
+)
+
+coordination_df_synth
+```
+
+```{r}
+nominal_df_synth <- syntax_df_synth %>%
+group_by(document) %>%
+summarise(
+complex_nominals = sum(is_complex_nominal_synth),
+clauses          = sum(is_clause_synth),
+sentences        = n_distinct(sentence_id),
+CN_per_C         = complex_nominals / pmax(clauses, 1),
+CN_per_S         = complex_nominals / sentences,
+.groups = "drop"
+)
+
+nominal_df
+```
+
+```{r}
+# Combine all measures
+all_measures_synth <- mls_df_synth %>%  # ← Added mls_df %>%
+  left_join(clausal_density_df_synth %>% select(document, C_per_S), by = "document") %>%
+  left_join(subordination_df_synth %>% select(document, DC_per_C, DC_per_S), by = "document") %>%
+  left_join(coordination_df_synth %>% select(document, Coord_per_C, Coord_per_S), by = "document") %>%
+  left_join(nominal_df_synth %>% select(document, CN_per_C, CN_per_S), by = "document")
+
+all_measures_synth
+
+write.csv(all_measures_synth, "../results/Tables/all_measures_synth.csv", row.names = FALSE)
+
+```
+
+
+
